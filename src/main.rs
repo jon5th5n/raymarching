@@ -1,15 +1,39 @@
 use std::f32::consts::PI;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use macroquad::{prelude::*, window};
 
 mod instruction_builder;
 use crate::instruction_builder::*;
+mod csg_builder;
+use crate::csg_builder::*;
 mod rm_camera;
 use crate::rm_camera::*;
 
 #[macroquad::main("raymarching")]
 async fn main() {
-    let fragment_shader = std::fs::read_to_string("./src/shader.fs").unwrap();
+    // run();
+    // return;
+
+    let mut scene = run();
+    scene.scene_from_instructions(std::fs::read_to_string("./instructions_dyncomp.txt").unwrap());
+    scene.generate_scene_sdf();
+    // println!("{}", scene.get_scene_sdf_eval_test());
+    // return;
+
+    // let fragment_shader = format!(
+    //     "{}\n{}\n{}",
+    //     "#version 410",
+    //     std::fs::read_to_string("./src/sdf.fs").unwrap(),
+    //     std::fs::read_to_string("./src/shader_dyncomp_appr.fs").unwrap(),
+    // );
+    let fragment_shader = format!(
+        "{}\n{}\n{}",
+        "#version 410",
+        scene.get_scene_sdf_eval_test(),
+        std::fs::read_to_string("./src/shader_dyncomp_appr.fs").unwrap(),
+    );
     let vertex_shader = std::fs::read_to_string("./src/shader.vs").unwrap();
 
     let mut material = load_material(
@@ -58,7 +82,7 @@ async fn main() {
         PI / 2.0,
         500.0,
         Vec3 {
-            x: 0.0,
+            x: -50.0,
             y: 0.0,
             z: 0.0,
         },
@@ -77,7 +101,7 @@ async fn main() {
     loop {
         println!("{}", get_fps());
 
-        draw_shader(&mut material, &rm_camera, tex);
+        draw_shader(&mut material, &rm_camera, tex, &mut scene);
 
         if is_key_down(KeyCode::W) {
             rm_camera.move_forward(1.0);
@@ -111,6 +135,23 @@ async fn main() {
             rm_camera.rotate_horizontal(PI / 180.0);
         }
 
+        let t = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+
+        let ts = f64::sin(t) as f32;
+
+        *scene.get_variable_float_mut("trans1_x").unwrap() = 25.0;
+        *scene.get_variable_float_mut("trans1_y").unwrap() = 50.0;
+        *scene.get_variable_float_mut("trans1_z").unwrap() = ts * 10.0;
+
+        *scene.get_variable_float_mut("rot1_x").unwrap() += 1.0;
+        *scene.get_variable_float_mut("rot1_y").unwrap() += 1.0;
+        *scene.get_variable_float_mut("rot1_z").unwrap() += 1.0;
+
+        *scene.get_variable_float_mut("scale2").unwrap() = ts;
+
         rm_camera.set_width((window::screen_width() / 10.0) as u32);
         rm_camera.set_height((window::screen_height() / 10.0) as u32);
 
@@ -118,9 +159,45 @@ async fn main() {
     }
 }
 
-fn draw_shader(material: &mut Material, camera: &RMCamera, passed_data: Texture2D) {
-    let fragment_shader = std::fs::read_to_string("./src/shader.fs").unwrap();
+fn draw_shader(
+    material: &mut Material,
+    camera: &RMCamera,
+    passed_data: Texture2D,
+    scene: &mut Scene,
+) {
+    // let fragment_shader = format!(
+    //     "{}\n{}\n{}",
+    //     "#version 410",
+    //     std::fs::read_to_string("./src/sdf.fs").unwrap(),
+    //     std::fs::read_to_string("./src/shader_dyncomp_appr.fs").unwrap(),
+    // );
+
+    scene.scene_from_instructions(std::fs::read_to_string("./instructions_dyncomp.txt").unwrap());
+    scene.generate_scene_sdf();
+
+    let fragment_shader = format!(
+        "{}\n{}\n{}",
+        "#version 410",
+        scene.get_scene_sdf_eval_test(),
+        std::fs::read_to_string("./src/shader_dyncomp_appr.fs").unwrap(),
+    );
     let vertex_shader = std::fs::read_to_string("./src/shader.vs").unwrap();
+
+    let mut uniforms = scene
+        .get_variables()
+        .keys()
+        .map(|k| (k.to_string(), UniformType::Float1))
+        .collect::<Vec<_>>();
+
+    uniforms.append(&mut vec![
+        ("cam_size".to_string(), UniformType::Int2),
+        ("cam_fov".to_string(), UniformType::Float1),
+        ("cam_depth".to_string(), UniformType::Float1),
+        ("cam_position".to_string(), UniformType::Float3),
+        ("cam_direction".to_string(), UniformType::Float3),
+        ("cam_up".to_string(), UniformType::Float3),
+        ("cam_right".to_string(), UniformType::Float3),
+    ]);
 
     material.delete();
     *material = load_material(
@@ -132,21 +209,16 @@ fn draw_shader(material: &mut Material, camera: &RMCamera, passed_data: Texture2
                 depth_test: Comparison::LessOrEqual,
                 ..Default::default()
             },
-            uniforms: vec![
-                ("cam_size".to_string(), UniformType::Int2),
-                ("cam_fov".to_string(), UniformType::Float1),
-                ("cam_depth".to_string(), UniformType::Float1),
-                ("cam_position".to_string(), UniformType::Float3),
-                ("cam_direction".to_string(), UniformType::Float3),
-                ("cam_up".to_string(), UniformType::Float3),
-                ("cam_right".to_string(), UniformType::Float3),
-            ],
+            uniforms,
             textures: vec!["./tex".to_string()],
             ..Default::default()
         },
     )
     .unwrap();
 
+    for (var_name, var_value) in scene.get_variables() {
+        material.set_uniform(var_name, var_value.clone())
+    }
     material.set_uniform(
         "cam_size",
         IVec2::new(camera.get_width() as i32, camera.get_height() as i32),

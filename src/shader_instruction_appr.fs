@@ -62,7 +62,7 @@ vec3 rotate(vec3 v,vec3 rotation_axis,float angle){
 
 //=======================================================================================
 
-#define VIRTUAL_STACK_SIZE 20
+#define VIRTUAL_STACK_SIZE 50
 
 uint op_stack[VIRTUAL_STACK_SIZE];
 uint op_stack_size=0;
