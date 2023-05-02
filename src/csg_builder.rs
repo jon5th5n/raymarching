@@ -5,6 +5,12 @@ pub fn run() -> Scene {
 
     let prims = HashMap::from([
         (
+            "plane".to_string(),
+            Primitive {
+                primitive_func: "sdf_plane([point], {vec3}, {vec3}, {float})".to_string(),
+            },
+        ),
+        (
             "sphere".to_string(),
             Primitive {
                 primitive_func: "sdf_sphere([point], {vec3}, {float})".to_string(),
@@ -33,6 +39,20 @@ pub fn run() -> Scene {
             },
         ),
         (
+            "roundang".to_string(),
+            Alterator {
+                input_func: None,
+                output_func: Some("op_o_round_ang([sd], {float})".to_string()),
+            },
+        ),
+        (
+            "elongate".to_string(),
+            Alterator {
+                input_func: Some("op_i_elongate([point], {vec3})".to_string()),
+                output_func: None,
+            },
+        ),
+        (
             "trans".to_string(),
             Alterator {
                 input_func: Some("op_i_trans([point], {vec3})".to_string()),
@@ -53,25 +73,64 @@ pub fn run() -> Scene {
                 output_func: None,
             },
         ),
+        (
+            "rep_inf".to_string(),
+            Alterator {
+                input_func: Some("op_i_rep_inf([point], {vec3})".to_string()),
+                output_func: None,
+            },
+        ),
+        (
+            "rep_lim".to_string(),
+            Alterator {
+                input_func: Some("op_i_rep_lim([point], {float}, {vec3})".to_string()),
+                output_func: None,
+            },
+        ),
+        (
+            "rep_polar".to_string(),
+            Alterator {
+                input_func: Some("op_i_rep_polar([point], {float})".to_string()),
+                output_func: None,
+            },
+        ),
     ]);
 
     let combs = HashMap::from([
         (
             "UNION".to_string(),
             Combinator {
-                combination_func: "com_union([], [])".to_string(),
+                combination_func: "com_union([sd], [sd])".to_string(),
+            },
+        ),
+        (
+            "UNION_SMOOTH".to_string(),
+            Combinator {
+                combination_func: "com_smooth_union([sd], [sd], {float})".to_string(),
             },
         ),
         (
             "INTER".to_string(),
             Combinator {
-                combination_func: "com_intersect([], [])".to_string(),
+                combination_func: "com_intersect([sd], [sd])".to_string(),
+            },
+        ),
+        (
+            "INTER_SMOOTH".to_string(),
+            Combinator {
+                combination_func: "com_smooth_intersect([sd], [sd], {float})".to_string(),
             },
         ),
         (
             "SUBST".to_string(),
             Combinator {
-                combination_func: "com_substract([], [])".to_string(),
+                combination_func: "com_substract([sd], [sd])".to_string(),
+            },
+        ),
+        (
+            "SUBST_SMOOTH".to_string(),
+            Combinator {
+                combination_func: "com_smooth_substract([sd], [sd], {float})".to_string(),
             },
         ),
     ]);
@@ -88,17 +147,6 @@ pub fn run() -> Scene {
     scene.scene_from_instructions(std::fs::read_to_string("./instructions_dyncomp.txt").unwrap());
 
     scene.generate_scene_sdf();
-
-    // *scene.get_variable_float_mut("scale1").unwrap() = 1.0;
-    // *scene.get_variable_float_mut("scale2").unwrap() = 1.0;
-
-    // *scene.get_variable_float_mut("radius1").unwrap() = 15.0;
-    // *scene.get_variable_float_mut("radius2").unwrap() = 15.0;
-    // *scene.get_variable_float_mut("radius3").unwrap() = 15.0;
-
-    // println!("{:?}", scene.variables);
-    // println!("{}", scene.get_scene_sdf_eval());
-    // println!("{}", scene.get_scene_sdf_eval());
     scene
 }
 
@@ -201,13 +249,15 @@ impl Scene {
             .collect::<Vec<_>>();
 
         match node.chars().next().unwrap().is_uppercase() {
-            true => CSGNode::Combinator(CombinatorNode::new(
-                self.combinators
-                    .get(&node)
+            true => {
+                let (comb_name, comb_params) = Self::prim_instruction_name_and_params(node);
+                let comb = self
+                    .combinators
+                    .get(&comb_name)
                     .expect("combinator missing in scene struct!")
-                    .clone(),
-                alters,
-            )),
+                    .eval(comb_params);
+                CSGNode::Combinator(CombinatorNode::new(comb, alters))
+            }
             false => {
                 let (prim_name, prim_params) = Self::prim_instruction_name_and_params(node);
                 let prim = self
@@ -327,33 +377,6 @@ impl Scene {
     pub fn get_scene_sdf_eval(&self) -> String {
         let mut result = self.scene_sdf_uneval.clone();
 
-        while let Some(opening) = result.find('$') {
-            result.replace_range(opening..=opening, " ");
-
-            let closing = result.find('$').expect("missing closing '$' for variable!");
-
-            let var_name = &result[(opening + 1)..closing];
-            let var_val = self
-                .variables
-                .get(var_name)
-                .expect("missing matching variable for evaluating of sdf!");
-
-            result.replace_range(opening..=closing, &format!("{:?}", var_val));
-        }
-        result = result.replace("[point]", "point");
-
-        result = format!(
-            "{}\n\n{}",
-            std::fs::read_to_string(&self.building_blocks_path).unwrap(),
-            result
-        );
-
-        result
-    }
-
-    pub fn get_scene_sdf_eval_test(&self) -> String {
-        let mut result = self.scene_sdf_uneval.clone();
-
         let mut variable_header = "".to_string();
 
         while let Some(opening) = result.find('$') {
@@ -380,7 +403,8 @@ impl Scene {
             std::fs::read_to_string(&self.building_blocks_path).unwrap(),
             variable_header,
             result
-        );
+        )
+        .replace("#version 410", "");
 
         result
     }
@@ -423,11 +447,11 @@ pub enum CSGNode {
 }
 
 pub struct CombinatorNode {
-    combinator: Combinator,
+    combinator: CombinatorEval,
     alterations: Vec<AlteratorEval>,
 }
 impl CombinatorNode {
-    fn new(combinator: Combinator, alterations: Vec<AlteratorEval>) -> Self {
+    fn new(combinator: CombinatorEval, alterations: Vec<AlteratorEval>) -> Self {
         Self {
             combinator,
             alterations,
@@ -590,14 +614,27 @@ pub struct AlteratorEval {
     output_func: Option<String>,
 }
 
-#[derive(Clone)]
 pub struct Combinator {
     combination_func: String,
 }
 impl Combinator {
+    pub fn eval(&self, params: Vec<Param>) -> CombinatorEval {
+        CombinatorEval {
+            combination_func: eval_function(self.combination_func.clone(), params.clone()),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct CombinatorEval {
+    combination_func: String,
+}
+impl CombinatorEval {
     fn combine(&self, one: PrimitiveEval, two: PrimitiveEval) -> PrimitiveEval {
-        let result = self.combination_func.replacen("[]", &one.primitive_func, 1);
-        let result = result.replacen("[]", &two.primitive_func, 1);
+        let result = self
+            .combination_func
+            .replacen("[sd]", &one.primitive_func, 1);
+        let result = result.replacen("[sd]", &two.primitive_func, 1);
 
         PrimitiveEval {
             primitive_func: result,

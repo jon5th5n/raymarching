@@ -1,6 +1,4 @@
 use std::f32::consts::PI;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
 use macroquad::{prelude::*, window};
 
@@ -13,26 +11,17 @@ use crate::rm_camera::*;
 
 #[macroquad::main("raymarching")]
 async fn main() {
-    // run();
-    // return;
-
     let mut scene = run();
     scene.scene_from_instructions(std::fs::read_to_string("./instructions_dyncomp.txt").unwrap());
     scene.generate_scene_sdf();
-    // println!("{}", scene.get_scene_sdf_eval_test());
-    // return;
 
-    // let fragment_shader = format!(
-    //     "{}\n{}\n{}",
-    //     "#version 410",
-    //     std::fs::read_to_string("./src/sdf.fs").unwrap(),
-    //     std::fs::read_to_string("./src/shader_dyncomp_appr.fs").unwrap(),
-    // );
     let fragment_shader = format!(
         "{}\n{}\n{}",
         "#version 410",
-        scene.get_scene_sdf_eval_test(),
-        std::fs::read_to_string("./src/shader_dyncomp_appr.fs").unwrap(),
+        scene.get_scene_sdf_eval(),
+        std::fs::read_to_string("./src/shader_dyncomp_appr.fs")
+            .unwrap()
+            .replace("#version 410", ""),
     );
     let vertex_shader = std::fs::read_to_string("./src/shader.vs").unwrap();
 
@@ -80,7 +69,8 @@ async fn main() {
         (window::screen_width() / 10.0) as u32,
         (window::screen_height() / 10.0) as u32,
         PI / 2.0,
-        500.0,
+        1000.0,
+        0.01,
         Vec3 {
             x: -50.0,
             y: 0.0,
@@ -129,28 +119,37 @@ async fn main() {
             rm_camera.rotate_vertical(-PI / 180.0);
         }
         if is_key_down(KeyCode::Right) {
-            rm_camera.rotate_horizontal(-PI / 180.0);
+            rm_camera.rotate(Vec3::new(0.0, 0.0, 1.0), -PI / 180.0);
         }
         if is_key_down(KeyCode::Left) {
-            rm_camera.rotate_horizontal(PI / 180.0);
+            rm_camera.rotate(Vec3::new(0.0, 0.0, 1.0), PI / 180.0);
         }
 
-        let t = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs_f64();
+        let t = get_time();
 
         let ts = f64::sin(t) as f32;
 
-        *scene.get_variable_float_mut("trans1_x").unwrap() = 25.0;
-        *scene.get_variable_float_mut("trans1_y").unwrap() = 50.0;
-        *scene.get_variable_float_mut("trans1_z").unwrap() = ts * 10.0;
+        *scene.get_variable_float_mut("gem_trans_z").unwrap() = (ts + 1.0) * 15.0;
+        *scene.get_variable_float_mut("gem_rot_x").unwrap() += 1.0;
+        *scene.get_variable_float_mut("gem_rot_y").unwrap() += 1.0;
+        *scene.get_variable_float_mut("gem_rot_z").unwrap() += 1.0;
 
-        *scene.get_variable_float_mut("rot1_x").unwrap() += 1.0;
-        *scene.get_variable_float_mut("rot1_y").unwrap() += 1.0;
-        *scene.get_variable_float_mut("rot1_z").unwrap() += 1.0;
+        *scene.get_variable_float_mut("guard_trans_z").unwrap() = (-ts + 1.0) * 15.0;
+        *scene.get_variable_float_mut("guard_rot_x").unwrap() += 5.0;
+        *scene.get_variable_float_mut("guard_rot_y").unwrap() += 5.0;
+        *scene.get_variable_float_mut("guard_rot_z").unwrap() += 5.0;
 
-        *scene.get_variable_float_mut("scale2").unwrap() = ts;
+        // *scene.get_variable_float_mut("btrans_z").unwrap() = (ts + 1.0) * 30.0;
+
+        // *scene.get_variable_float_mut("trans1_x").unwrap() = 25.0;
+        // *scene.get_variable_float_mut("trans1_y").unwrap() = 50.0;
+        // *scene.get_variable_float_mut("trans1_z").unwrap() = ts * 10.0;
+
+        // *scene.get_variable_float_mut("rot1_x").unwrap() += 1.0;
+        // *scene.get_variable_float_mut("rot1_y").unwrap() += 1.0;
+        // *scene.get_variable_float_mut("rot1_z").unwrap() += 1.0;
+
+        // *scene.get_variable_float_mut("scale2").unwrap() = ts;
 
         rm_camera.set_width((window::screen_width() / 10.0) as u32);
         rm_camera.set_height((window::screen_height() / 10.0) as u32);
@@ -178,8 +177,10 @@ fn draw_shader(
     let fragment_shader = format!(
         "{}\n{}\n{}",
         "#version 410",
-        scene.get_scene_sdf_eval_test(),
-        std::fs::read_to_string("./src/shader_dyncomp_appr.fs").unwrap(),
+        scene.get_scene_sdf_eval(),
+        std::fs::read_to_string("./src/shader_dyncomp_appr.fs")
+            .unwrap()
+            .replace("#version 410", ""),
     );
     let vertex_shader = std::fs::read_to_string("./src/shader.vs").unwrap();
 
@@ -193,6 +194,7 @@ fn draw_shader(
         ("cam_size".to_string(), UniformType::Int2),
         ("cam_fov".to_string(), UniformType::Float1),
         ("cam_depth".to_string(), UniformType::Float1),
+        ("cam_threshold".to_string(), UniformType::Float1),
         ("cam_position".to_string(), UniformType::Float3),
         ("cam_direction".to_string(), UniformType::Float3),
         ("cam_up".to_string(), UniformType::Float3),
@@ -225,6 +227,7 @@ fn draw_shader(
     );
     material.set_uniform("cam_fov", camera.get_fov());
     material.set_uniform("cam_depth", camera.get_depth());
+    material.set_uniform("cam_threshold", camera.get_threshold());
     material.set_uniform("cam_position", camera.get_position());
     material.set_uniform("cam_direction", camera.get_direction());
     material.set_uniform("cam_up", camera.get_up());

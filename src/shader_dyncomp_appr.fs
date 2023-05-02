@@ -1,3 +1,4 @@
+#version 410
 precision lowp float;
 vec4 sdf(vec3 point);
 
@@ -6,6 +7,7 @@ varying vec2 uv;
 uniform ivec2 cam_size;
 uniform float cam_fov;
 uniform float cam_depth;
+uniform float cam_threshold;
 uniform vec3 cam_position;
 uniform vec3 cam_direction;
 uniform vec3 cam_up;
@@ -28,7 +30,7 @@ vec3 rotate(vec3 v,vec3 rotation_axis,float angle){
 }
 
 vec3 get_normal3(vec3 p){
-    float epsilon=.001;// arbitrary — should be smaller than any surface detail in your distance function, but not so small as to get lost in float precision
+    float epsilon=cam_threshold;
     float centerDistance=sdf(p).w;
     float xDistance=sdf(p+vec3(epsilon,0,0)).w;
     float yDistance=sdf(p+vec3(0,epsilon,0)).w;
@@ -51,12 +53,59 @@ vec3 get_normal6(in vec3 p)
     return normalize(normal);
 }
 
-float get_shading(vec3 p){
-    vec3 light_source=vec3(-15.,0.,50.);
+#define NUM_LIGHTS 1
+vec3 lights[NUM_LIGHTS]=vec3[](vec3(-50.,0.,200.));
+
+float get_shading(vec3 point){
+    // float tmp=.5;
+    // float shading=1.;
+    // for(uint i=0;i<NUM_LIGHTS;i++){
+        //     vec3 light=lights[i];
+        //     float light_dist=length(light-point);
+        //     vec3 ray=normalize(light-point);
+        
+        //     //march
+        //     float first_dist=sdf(point).w;
+        //     float travel_dist=0.;
+        //     while(travel_dist<light_dist){
+            //         float dist=sdf(point+(ray*travel_dist)).w;
+            
+            //         if(dist<=cam_threshold){
+                //             shading=0.;
+                //             break;
+            //         }
+            
+            //         travel_dist+=dist;
+            
+            //         shading=min(shading,dist/(travel_dist*.02));
+        //     }
+        
+    // }
     
-    vec3 light_dir=light_source-p;
+    // return shading;
+    float shadow=1.f;
+    float shadowRayLength=0.;
     
-    return dot(get_normal3(p),light_dir);
+    vec3 light=lights[0];
+    float light_dist=length(light-point);
+    vec3 ray=normalize(light-point);
+    
+    while(shadowRayLength<light_dist)
+    {
+        vec3 testPos=point+ray*shadowRayLength;
+        float distFromObject=sdf(testPos).w;
+        shadowRayLength+=distFromObject;
+        
+        shadow=min(shadow,distFromObject/(shadowRayLength*.01));
+        
+        if(distFromObject<cam_threshold)
+        {
+            shadow=0.;
+            break;
+        }
+    }
+    
+    return shadow/(sqrt(light_dist/100));
 }
 
 vec4 march(){
@@ -69,19 +118,21 @@ vec4 march(){
     
     //-----
     
-    vec4 color=vec4(.1804,.1804,.1804,1.);
+    vec4 color=vec4(.53,.81,.92,1.);
     float i=0.;
-    while(true){
+    while(i<=cam_depth){
         vec3 point=cam_position+(ray*i);
         vec4 color_dist=sdf(point);
         float dist=color_dist.w;
-        if(dist<=.1){
-            color=vec4(color_dist.xyz*get_shading(point)/70.,1.);
+        if(dist<=cam_threshold){
+            float shading=get_shading(point-(ray*(cam_threshold+dist+cam_threshold*.2)));
+            vec4 c=vec4(color_dist.xyz*shading,1.);
+            float d_fog=i/cam_depth;
+            color=mix(c,color,d_fog);
             break;
         }
         
         i+=dist;
-        if(i>=cam_depth)break;
     }
     
     return color;

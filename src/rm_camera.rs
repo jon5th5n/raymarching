@@ -5,6 +5,7 @@ pub struct RMCamera {
     height: u32,
     fov: f32,
     depth: f32,
+    threshold: f32,
     position: Vec3,
     direction: Vec3,
     up: Vec3,
@@ -16,6 +17,7 @@ impl RMCamera {
         height: u32,
         fov: f32,
         depth: f32,
+        threshold: f32,
         position: Vec3,
         direction: Vec3,
         up: Vec3,
@@ -25,6 +27,7 @@ impl RMCamera {
             height,
             fov,
             depth,
+            threshold,
             position,
             direction: direction.normalize(),
             up: up.normalize(),
@@ -57,6 +60,13 @@ impl RMCamera {
     }
     pub fn set_depth(&mut self, depth: f32) {
         self.depth = depth;
+    }
+
+    pub fn get_threshold(&self) -> f32 {
+        self.threshold
+    }
+    pub fn set_threshold(&mut self, threshold: f32) {
+        self.threshold = threshold;
     }
 
     pub fn get_position(&self) -> Vec3 {
